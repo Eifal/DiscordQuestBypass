@@ -139,6 +139,11 @@
       "name": "Delta Force",
       "path": "Delta Force\\Game\\DeltaForce\\Binaries\\Win64",
       "executable": "DeltaForceClient-Win64-Shipping.exe"
+    },
+    {
+      "name": "Stalzone",
+      "path": "STALZONE\\bin_global\\win64\\java\\bin",
+      "executable": "talzonew.exe"
     }
   ]
 }
