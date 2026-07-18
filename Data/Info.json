@@ -144,7 +144,7 @@
       "name": "Stalzone",
       "path": "STALZONE\\bin_global\\win64\\java\\bin",
       "executable": "stalcraftw.exe"
-    }
+    },
     {
       "name": "RuneScape",
       "path": "RuneScape\\bin\\win64",
