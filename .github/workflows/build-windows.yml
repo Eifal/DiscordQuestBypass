@@ -1,0 +1,75 @@
+name: Build Windows executables
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller requests
+
+      # Console mode is required: the launcher is a text menu and default.exe
+      # writes raw ANSI escapes. --windowed would break both.
+      - name: Build DiscordQuestCompleter.exe
+        run: >
+          python -m PyInstaller --onefile --console --clean
+          --name DiscordQuestCompleter Launcher.py
+
+      - name: Build default.exe
+        run: >
+          python -m PyInstaller --onefile --console --clean
+          --name default Default.py
+
+      - name: Smoke test default.exe
+        shell: pwsh
+        run: |
+          # default.exe animates until killed, so just check it starts and stays up.
+          $p = Start-Process -FilePath dist\default.exe -PassThru
+          Start-Sleep -Seconds 5
+          if ($p.HasExited) { throw "default.exe exited early with code $($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
+          Write-Host "default.exe ran for 5s without crashing."
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-executables
+          path: |
+            dist/DiscordQuestCompleter.exe
+            dist/default.exe
+          if-no-files-found: error
+
+      - name: Attach executables to release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $assets = @('dist/DiscordQuestCompleter.exe', 'dist/default.exe')
+          # Create the release on first run; re-upload over it on any re-run.
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag @assets --clobber
+          } else {
+            gh release create $tag @assets --title $tag --generate-notes
+          }
+          if ($LASTEXITCODE -ne 0) { throw "publishing release $tag failed" }
