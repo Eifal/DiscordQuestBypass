@@ -149,6 +149,16 @@
       "name": "RuneScape",
       "path": "RuneScape\\bin\\win64",
       "executable": "RuneScape.exe"
+    },
+    {
+      "name": "MARVEL Tōkon: Fighting Souls",
+      "path": "MTFS\\Binaries\\Win64\\",
+      "executable": "MTFSSteam-Win64-Shipping.exe"
+    },
+    {
+      "name": "Helldivers 2",
+      "path": "Helldivers 2\\bin\\",
+      "executable": "helldivers2.exe"
     }
   ]
 }
