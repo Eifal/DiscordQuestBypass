@@ -3,7 +3,15 @@ import shutil
 import json
 import requests
 import subprocess
+import sys
 from pathlib import Path
+
+# Game names contain non-ASCII characters. When stdout is a real console Python
+# uses UTF-16 via WriteConsoleW, but when it is redirected (piped to a file or
+# another process) it falls back to the cp1252 locale codec and printing those
+# names raises UnicodeEncodeError. Force UTF-8 either way.
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 # --- Configuration & Paths ---
 BASE_DIR = Path(os.getenv('APPDATA')) / "DiscordQuestCompleter"
@@ -62,7 +70,7 @@ def select_game():
         return
 
     try:
-        with open(info_path, 'r') as f:
+        with open(info_path, 'r', encoding='utf-8-sig') as f:
             data = json.load(f)
             game_list = data.get("games", [])
     except Exception as e:

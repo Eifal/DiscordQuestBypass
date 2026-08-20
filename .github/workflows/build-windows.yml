@@ -10,6 +10,9 @@ on:
 
 permissions:
   contents: write
+  # Required for actions/attest-build-provenance to sign the attestation.
+  id-token: write
+  attestations: write
 
 jobs:
   build:
@@ -27,24 +30,31 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pyinstaller requests
 
-      # Console mode is required: the launcher is a text menu and default.exe
-      # writes raw ANSI escapes. --windowed would break both.
-      - name: Build DiscordQuestCompleter.exe
+      # The launcher is built --onedir: it unpacks nothing to %TEMP% at runtime,
+      # which draws materially fewer Defender/SmartScreen false positives than a
+      # self-extracting --onefile build. Users get a folder (shipped as a zip).
+      #
+      # Console mode is required either way: the launcher is a text menu and
+      # default.exe writes raw ANSI escapes. --windowed would break both.
+      - name: Build DiscordQuestCompleter (onedir)
         run: >
-          python -m PyInstaller --onefile --console --clean
+          python -m PyInstaller --onedir --console --clean
           --name DiscordQuestCompleter Launcher.py
 
-      - name: Build default.exe
+      # default.exe MUST stay --onefile: the launcher copies it as a single file
+      # and renames it per game (shutil.copy in select_game). A onedir build would
+      # split it into default.exe + _internal\ and break that copy-and-rename step.
+      - name: Build default.exe (onefile)
         run: >
           python -m PyInstaller --onefile --console --clean
           --name default Default.py
 
-      - name: Smoke test DiscordQuestCompleter.exe
+      - name: Smoke test DiscordQuestCompleter
         shell: pwsh
         run: |
           # Feed the menu a "4" (Exit) so the frozen exe starts, imports
           # requests, renders the menu and exits cleanly.
-          $out = '4' | & dist\DiscordQuestCompleter.exe
+          $out = '4' | & dist\DiscordQuestCompleter\DiscordQuestCompleter.exe
           if ($LASTEXITCODE -ne 0) { throw "launcher exited with code $LASTEXITCODE" }
           # Out-String collapses the captured lines into one scalar. Matching an
           # array with -notmatch filters it instead of returning a boolean, and a
@@ -65,22 +75,58 @@ jobs:
           Stop-Process -Id $p.Id -Force
           Write-Host "default.exe ran for 5s without crashing."
 
+      - name: Package launcher folder as a zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist\DiscordQuestCompleter\* `
+            -DestinationPath dist\DiscordQuestCompleter-windows.zip -Force
+          Write-Host "packaged dist\DiscordQuestCompleter-windows.zip"
+
+      - name: Publish SHA-256 hashes
+        shell: pwsh
+        run: |
+          $files = @('dist\DiscordQuestCompleter-windows.zip', 'dist\default.exe')
+          $lines = foreach ($f in $files) {
+            $h = (Get-FileHash -Algorithm SHA256 $f).Hash.ToLower()
+            "$h  $(Split-Path $f -Leaf)"
+          }
+          $lines | Tee-Object -FilePath dist\SHA256SUMS.txt
+          # Also surface the hashes in the run summary so they are easy to copy.
+          $fence = '```'
+          @('## SHA-256', '', $fence) + $lines + @($fence) `
+            | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      # Cryptographically links these exact artifacts to this workflow run and
+      # commit. Anyone can verify with:  gh attestation verify <file> --repo <owner>/<repo>
+      - name: Attest build provenance
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/DiscordQuestCompleter-windows.zip
+            dist/default.exe
+
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-executables
+          name: windows-build
           path: |
-            dist/DiscordQuestCompleter.exe
+            dist/DiscordQuestCompleter-windows.zip
             dist/default.exe
+            dist/SHA256SUMS.txt
           if-no-files-found: error
 
-      - name: Attach executables to release
+      - name: Attach artifacts to release
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = $env:GITHUB_REF_NAME
-          $assets = @('dist/DiscordQuestCompleter.exe', 'dist/default.exe')
+          $assets = @(
+            'dist/DiscordQuestCompleter-windows.zip',
+            'dist/default.exe',
+            'dist/SHA256SUMS.txt'
+          )
           # Create the release on first run; re-upload over it on any re-run.
           gh release view $tag 2>$null
           if ($LASTEXITCODE -eq 0) {
