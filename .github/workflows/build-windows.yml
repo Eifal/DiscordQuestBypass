@@ -39,6 +39,18 @@ jobs:
           python -m PyInstaller --onefile --console --clean
           --name default Default.py
 
+      - name: Smoke test DiscordQuestCompleter.exe
+        shell: pwsh
+        run: |
+          # Feed the menu a "4" (Exit) so the frozen exe starts, imports
+          # requests, renders the menu and exits cleanly.
+          $out = '4' | & dist\DiscordQuestCompleter.exe
+          if ($LASTEXITCODE -ne 0) { throw "launcher exited with code $LASTEXITCODE" }
+          if ($out -notmatch 'Discord Quest Completer') {
+            throw "launcher did not render its menu. Output: $out"
+          }
+          Write-Host "launcher started and exited cleanly."
+
       - name: Smoke test default.exe
         shell: pwsh
         run: |
