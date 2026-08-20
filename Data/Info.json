@@ -151,8 +151,8 @@
       "executable": "RuneScape.exe"
     },
     {
-      "name": "MARVEL Tokon",
-      "path": "MTFS\\Binaries\\Win64\\",
+      "name": "MARVEL Tokon: Fighting Souls",
+      "path": "MTFS\\Binaries\\Win64",
       "executable": "MTFSSteam-Win64-Shipping.exe"
     },
     {
