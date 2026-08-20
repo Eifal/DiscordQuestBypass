@@ -46,8 +46,12 @@ jobs:
           # requests, renders the menu and exits cleanly.
           $out = '4' | & dist\DiscordQuestCompleter.exe
           if ($LASTEXITCODE -ne 0) { throw "launcher exited with code $LASTEXITCODE" }
-          if ($out -notmatch 'Discord Quest Completer') {
-            throw "launcher did not render its menu. Output: $out"
+          # Out-String collapses the captured lines into one scalar. Matching an
+          # array with -notmatch filters it instead of returning a boolean, and a
+          # non-empty filter result is always truthy.
+          $text = $out | Out-String
+          if ($text -notmatch 'Discord Quest Completer') {
+            throw "launcher did not render its menu. Output: $text"
           }
           Write-Host "launcher started and exited cleanly."
 
