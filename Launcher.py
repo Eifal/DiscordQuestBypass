@@ -1,6 +1,7 @@
 import os
 import shutil
 import json
+import time
 import hashlib
 import requests
 import subprocess
@@ -111,19 +112,33 @@ def find_steam_path():
     return None
 
 def write_steam_manifest(steamapps_dir, appid, installdir, name):
-    """Writes a minimal appmanifest_<appid>.acf so Discord sees the game as
-    installed. Discord maps appid -> installdir and then attributes any process
-    running under steamapps\\common\\<installdir>\\ to this game."""
+    """Writes an appmanifest_<appid>.acf so Discord sees the game as installed.
+
+    Discord's current SKU verification does NOT accept a bare appid/installdir
+    stub -- it validates the manifest looks like a real, fully-installed game.
+    A minimal 3-field manifest is silently ignored (the quest never progresses),
+    so we write the full field set that the confirmed working method requires:
+    StateFlags 6, plus buildid / LastUpdated / LastPlayed / SizeOnDisk.
+    """
     manifest = steamapps_dir / f"appmanifest_{appid}.acf"
-    # Valve KeyValues (VDF) format, tab-indented. StateFlags 4 == fully installed.
+    now = int(time.time())
+    # Valve KeyValues (VDF), tab-indented. StateFlags 6 == fully installed.
     content = (
         '"AppState"\n'
         '{\n'
         f'\t"appid"\t\t"{appid}"\n'
         '\t"Universe"\t\t"1"\n'
         f'\t"name"\t\t"{name}"\n'
-        '\t"StateFlags"\t\t"4"\n'
+        '\t"StateFlags"\t\t"6"\n'
         f'\t"installdir"\t\t"{installdir}"\n'
+        f'\t"LastUpdated"\t\t"{now}"\n'
+        f'\t"LastPlayed"\t\t"{now}"\n'
+        '\t"SizeOnDisk"\t\t"53687091200"\n'
+        '\t"buildid"\t\t"10000000"\n'
+        '\t"BytesToDownload"\t\t"0"\n'
+        '\t"BytesDownloaded"\t\t"53687091200"\n'
+        '\t"BytesToStage"\t\t"0"\n'
+        '\t"BytesStaged"\t\t"53687091200"\n'
         # Marker so cleanup can prove this manifest is one we created and not the
         # user's real one. Extra keys are valid VDF and ignored by Discord/Steam.
         f'\t"{DQC_MARKER}"\t\t"1"\n'
@@ -257,7 +272,11 @@ def deploy_steam_game(selected, default_exe_source):
     print(f"    {manifest}")
     print(f"    {steamapps / 'common' / installdir}")
     print("[i] Use menu option 'Clean Steam deployments' to remove them safely later.")
-    print("[i] If Discord doesn't pick it up, restart Discord once or twice.\n")
+    print("\n[i] For the quest to count, make sure:")
+    print("    - you ACCEPTED the quest in the Discord DESKTOP app first")
+    print("    - you leave the launched window running for the full 15 minutes")
+    print("    - Discord shows the game under your name as 'Playing'")
+    print("[i] If it doesn't show as Playing, restart the Discord desktop app.\n")
 
     _launch(game_exe_path, game_folder, selected['name'])
 
