@@ -152,7 +152,10 @@
     },
     {
       "name": "MARVEL Tokon: Fighting Souls",
-      "path": "MTFS\\Binaries\\Win64",
+      "detection": "steam",
+      "steam_appid": "3787240",
+      "installdir": "MTFS",
+      "path": "Binaries\\Win64",
       "executable": "MTFSSteam-Win64-Shipping.exe"
     },
     {

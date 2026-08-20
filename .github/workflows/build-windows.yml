@@ -52,9 +52,9 @@ jobs:
       - name: Smoke test DiscordQuestCompleter
         shell: pwsh
         run: |
-          # Feed the menu a "4" (Exit) so the frozen exe starts, imports
+          # Feed the menu a "5" (Exit) so the frozen exe starts, imports
           # requests, renders the menu and exits cleanly.
-          $out = '4' | & dist\DiscordQuestCompleter\DiscordQuestCompleter.exe
+          $out = '5' | & dist\DiscordQuestCompleter\DiscordQuestCompleter.exe
           if ($LASTEXITCODE -ne 0) { throw "launcher exited with code $LASTEXITCODE" }
           # Out-String collapses the captured lines into one scalar. Matching an
           # array with -notmatch filters it instead of returning a boolean, and a
