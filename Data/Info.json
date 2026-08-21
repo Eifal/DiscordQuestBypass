@@ -162,6 +162,11 @@
       "name": "Helldivers 2",
       "path": "Helldivers 2\\bin\\",
       "executable": "helldivers2.exe"
+    },
+    {
+      "name": "Call of Duty - Modern Warfare 4",
+      "path": "Call of Duty - Modern Warfare 4",
+      "executable": "cod.exe"
     }
   ]
 }
