@@ -167,6 +167,11 @@
       "name": "Call of Duty - Modern Warfare 4",
       "path": "Call of Duty - Modern Warfare 4",
       "executable": "cod.exe"
+    },
+    {
+      "name": "Marvel Snap",
+      "path": "marvel snap",
+      "executable": "snap.exe"
     }
   ]
 }
