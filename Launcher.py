@@ -24,8 +24,8 @@ if hasattr(sys.stdout, 'reconfigure'):
 # --- Configuration & Paths ---
 BASE_DIR = Path(os.getenv('APPDATA')) / "DiscordQuestCompleter"
 DATA_DIR = BASE_DIR / "Data"
-INFO_JSON_URL = "https://raw.githubusercontent.com/vaaanir/DiscordQuestBypass/refs/heads/main/Data/Info.json"
-DEFAULT_EXE_URL = "https://raw.githubusercontent.com/vaaanir/DiscordQuestBypass/refs/heads/main/Data/default.exe"
+INFO_JSON_URL = "https://raw.githubusercontent.com/Eifal/DiscordQuestBypass/refs/heads/main/Data/Info.json"
+DEFAULT_EXE_URL = "https://raw.githubusercontent.com/Eifal/DiscordQuestBypass/refs/heads/main/Data/default.exe"
 
 # Ensure the base directory exists
 BASE_DIR.mkdir(parents=True, exist_ok=True)

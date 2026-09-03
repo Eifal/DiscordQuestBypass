@@ -172,6 +172,11 @@
       "name": "Marvel Snap",
       "path": "marvel snap",
       "executable": "snap.exe"
+    },
+    {
+      "name": "Dragon's Dogma 2",
+      "path": "Dragons Dogma 2",
+      "executable": "DD2.exe"
     }
   ]
 }
