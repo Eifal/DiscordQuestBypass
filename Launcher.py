@@ -1,6 +1,7 @@
 import os
 import shutil
 import json
+import re
 import time
 import hashlib
 import requests
@@ -26,6 +27,15 @@ BASE_DIR = Path(os.getenv('APPDATA')) / "DiscordQuestCompleter"
 DATA_DIR = BASE_DIR / "Data"
 INFO_JSON_URL = "https://raw.githubusercontent.com/Eifal/DiscordQuestBypass/refs/heads/main/Data/Info.json"
 DEFAULT_EXE_URL = "https://raw.githubusercontent.com/Eifal/DiscordQuestBypass/refs/heads/main/Data/default.exe"
+
+# Game finder APIs: Discord's detectable DB (+24k games, ~5MB, cached 24h),
+# SteamCMD public API and the Steam store API for the steam-mode fallback.
+DETECTABLE_URL = "https://discord.com/api/v10/applications/detectable"
+STEAMCMD_INFO_URL = "https://api.steamcmd.net/v1/info/{appid}"
+STEAM_STORE_URL = "https://store.steampowered.com/api/appdetails?appids={appid}&l=english"
+DETECTABLE_UA = {"User-Agent": "DiscordBot (DiscordQuestLauncher, 1.0)"}
+CACHE_FILE = BASE_DIR / "detectable_cache.json"
+CACHE_TTL = 24 * 3600
 
 # Ensure the base directory exists
 BASE_DIR.mkdir(parents=True, exist_ok=True)
@@ -413,6 +423,283 @@ def select_game():
 
     input("\nPress Enter to return to menu...")
 
+# --- Game finder: manual search & Info.json update ---
+# Adds a quest game without waiting for library updates: search Discord's
+# detectable DB by name or steam appid, then append the generated entry to
+# %APPDATA%\DiscordQuestCompleter\Info.json so it shows up in "Select Game".
+# NOTE: "Update library" re-downloads Info.json from GitHub and overwrites
+# manual entries, so re-add them afterwards if needed.
+def sanitize_folder(name):
+    name = re.sub(r'[<>:"/\\|?*]', "", name).strip()
+    return name or "Unknown Game"
+
+def fetch_detectable(force=False):
+    """Downloads (and caches 24h) Discord's detectable applications DB."""
+    if not force and CACHE_FILE.exists():
+        age = time.time() - CACHE_FILE.stat().st_mtime
+        if age < CACHE_TTL:
+            try:
+                with open(CACHE_FILE, 'r', encoding='utf-8') as f:
+                    print(f"[i] Using detectable cache ({age/3600:.1f} hours old).")
+                    return json.load(f)
+            except ValueError:
+                pass
+    print("[*] Downloading Discord detectable DB (~5MB)...")
+    response = requests.get(DETECTABLE_URL, headers=DETECTABLE_UA, timeout=60)
+    response.raise_for_status()
+    data = response.json()
+    with open(CACHE_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f)
+    print(f"[+] {len(data)} applications cached.")
+    return data
+
+def win_exes(app):
+    """Return the app's win32 executables only."""
+    out = []
+    for e in app.get("executables") or []:
+        if isinstance(e, dict):
+            if e.get("os", "win32") == "win32" and not e.get("is_launcher"):
+                out.append(e["name"])
+        elif isinstance(e, str):
+            out.append(e)
+    return out
+
+def steam_skus(app):
+    return [s.get("id") for s in (app.get("third_party_skus") or [])
+            if isinstance(s, dict) and s.get("distributor") == "steam" and s.get("id")]
+
+def search_by_name(db, keyword):
+    kw = keyword.lower()
+    return [a for a in db
+            if kw in a.get("name", "").lower()
+            or any(kw in str(x).lower() for x in (a.get("aliases") or []))]
+
+def search_by_appid(db, appid):
+    appid = str(appid).strip()
+    return [a for a in db if appid in [str(s) for s in steam_skus(a)]]
+
+def fetch_steamcmd(appid):
+    """Return (installdir, [executables]) from the SteamCMD API, or (None, [])."""
+    try:
+        r = requests.get(STEAMCMD_INFO_URL.format(appid=appid), timeout=30)
+        r.raise_for_status()
+        cfg = r.json().get("data", {}).get(str(appid), {}).get("config", {})
+        exes = list(dict.fromkeys(
+            v["executable"].replace("/", "\\")
+            for v in (cfg.get("launch") or {}).values()
+            if isinstance(v, dict) and v.get("executable")
+        ))
+        return cfg.get("installdir"), exes
+    except Exception as e:
+        print(f"[?] SteamCMD lookup failed: {e}")
+        return None, []
+
+def fetch_steam_name(appid):
+    try:
+        r = requests.get(STEAM_STORE_URL.format(appid=appid), timeout=30)
+        r.raise_for_status()
+        node = r.json().get(str(appid), {})
+        if node.get("success"):
+            return node.get("data", {}).get("name")
+    except Exception:
+        pass
+    return None
+
+def split_discord_exe(discord_exe, game_name):
+    """'TslGame/Binaries/Win64/ExecPubg.exe' -> (path, exe) for Info.json.
+
+    The path is prefixed with the game name to stay unique under Data/:
+    'PUBG\\TslGame\\Binaries\\Win64', 'ExecPubg.exe'
+    """
+    parts = discord_exe.replace("/", "\\").strip("\\").split("\\")
+    folder = sanitize_folder(game_name)
+    subdir = "\\".join(parts[:-1])
+    return (f"{folder}\\{subdir}" if subdir else folder, parts[-1])
+
+def split_steam_exe(steam_exe, installdir):
+    """'TslGame\\Binaries\\Win64\\ExecPubg.exe' -> (path-relative-to-installdir, exe)."""
+    parts = steam_exe.strip("\\").split("\\")
+    return "\\".join(parts[:-1]), parts[-1]
+
+def save_finder_entry(entry):
+    """Appends an entry to the AppData Info.json (with backup + dedup)."""
+    info_path = BASE_DIR / "Info.json"
+    try:
+        with open(info_path, 'r', encoding='utf-8-sig') as f:
+            data = json.load(f)
+    except (FileNotFoundError, ValueError):
+        data = {"games": []}
+    games = data.get("games", [])
+
+    for g in games:
+        if g.get("name", "").lower() == entry.get("name", "").lower():
+            print(f"[!] '{entry['name']}' already exists. Skipped.")
+            return
+        if entry.get("steam_appid") and g.get("steam_appid") == entry["steam_appid"]:
+            print(f"[!] steam_appid {entry['steam_appid']} already exists ({g.get('name')}). Skipped.")
+            return
+
+    if info_path.exists():
+        try:
+            info_path.with_suffix(".json.bak").write_bytes(info_path.read_bytes())
+        except OSError:
+            pass
+    games.append(entry)
+    data["games"] = games
+    with open(info_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    print(f"[+] Entry '{entry['name']}' added. It now shows up in 'Select Game'.")
+    print("[i] Note: 'Update library' overwrites Info.json, re-add manual entries after it.")
+
+def prompt_finder_entry(suggested):
+    print("\n--- Entry to be added ---")
+    print(json.dumps(suggested, indent=2, ensure_ascii=False))
+    ans = input("\nAdd to Info.json? [y/N/edit]: ").strip().lower()
+    if ans == "edit":
+        for k in list(suggested.keys()):
+            v = input(f"  {k} [{suggested[k]}] (enter=keep, -=remove): ").strip()
+            if v == "-":
+                suggested.pop(k, None)
+            elif v:
+                suggested[k] = v
+        ans = input("Save this entry? [y/N]: ").strip().lower()
+    if ans != "y":
+        print("[i] Cancelled.")
+        return
+    save_finder_entry(suggested)
+
+def handle_finder_app(app):
+    name = app.get("name", "?")
+    print(f"\n=== {name} ===")
+    print(f"  id      : {app.get('id')}")
+    print(f"  aliases : {', '.join(app.get('aliases') or []) or '-'}")
+    exes = win_exes(app)
+    skus = steam_skus(app)
+    print(f"  exe win : {', '.join(exes) if exes else '(EMPTY -> needs steam mode)'}")
+    print(f"  steam   : {', '.join(map(str, skus)) if skus else '-'}")
+
+    if exes:
+        print("\n[mode: DIRECT/process]")
+        print("Select exe (Discord sometimes provides several variants):")
+        for i, e in enumerate(exes, 1):
+            print(f"  {i}. {e}")
+        sel = input(f"Select [1-{len(exes)}] (default 1): ").strip() or "1"
+        try:
+            chosen = exes[int(sel) - 1]
+        except (ValueError, IndexError):
+            chosen = exes[0]
+        path, exe = split_discord_exe(chosen, name)
+        prompt_finder_entry({"name": name, "path": path, "executable": exe})
+    elif skus:
+        print("\n[mode: STEAM - empty executables]")
+        handle_finder_steam(name, str(skus[0]))
+    else:
+        print("[-] No exe or steam SKU. This quest is probably a Video/Activity/SDK type - it cannot be faked.")
+
+def handle_finder_steam(game_name, appid):
+    print(f"[*] SteamCMD lookup for appid {appid}...")
+    installdir, exes = fetch_steamcmd(appid)
+    store_name = fetch_steam_name(appid)
+    if store_name:
+        print(f"[i] Steam store name: {store_name}")
+    print(f"[i] installdir: {installdir or '(not found)'}")
+    if exes:
+        # SteamCMD lists launcher/wrapper exes; the binary Discord detects can
+        # differ (e.g. MTFS expects MTFSSteam-Win64-Shipping.exe), so typing it
+        # manually is always allowed.
+        print("    candidate exes (type manually if the real one is missing):")
+        for i, e in enumerate(exes, 1):
+            print(f"      {i}. {e}")
+    print("    (also check https://steamdb.info/app/%s/ -> Depots/Configuration)" % appid)
+
+    if not installdir:
+        installdir = input("installdir (folder name under steamapps/common/): ").strip()
+        if not installdir:
+            print("[-] installdir is required for steam mode. Cancelled.")
+            return
+    if exes:
+        sel = input(f"Select exe [1-{len(exes)}] or type manually (default 1): ").strip() or "1"
+        chosen = exes[int(sel) - 1] if sel.isdigit() and 1 <= int(sel) <= len(exes) else sel
+    else:
+        chosen = input("executable + subpath (e.g.: Binaries\\Win64\\GameSteam-Win64-Shipping.exe): ").strip()
+        if not chosen:
+            print("[-] Cancelled.")
+            return
+    subpath, exe = split_steam_exe(chosen.replace("/", "\\"), installdir)
+    prompt_finder_entry({
+        "name": game_name,
+        "detection": "steam",
+        "steam_appid": str(appid),
+        "installdir": installdir,
+        "path": subpath,
+        "executable": exe,
+    })
+
+def find_add_game():
+    """Submenu: search Discord's DB and append new entries to Info.json."""
+    try:
+        db = fetch_detectable()
+    except Exception as e:
+        print(f"[-] Failed to fetch Discord DB: {e}")
+        input("\nPress Enter to return to menu...")
+        return
+
+    while True:
+        print("\n--- Find / add game ---")
+        print("1. Search by game name")
+        print("2. Search by steam appid")
+        print("3. Refresh detectable cache")
+        print("b. Back")
+        c = input("\n> ").strip().lower()
+        if c == "1":
+            kw = input("Game / quest name (or 'b' to go back): ").strip()
+            if not kw or kw.lower() == "b":
+                continue
+            hits = search_by_name(db, kw)
+            if not hits:
+                print(f"[-] '{kw}' not found in the Discord API.")
+                if input("Fall back to SteamDB via appid? [y/N]: ").strip().lower() == "y":
+                    appid = input("Steam appid: ").strip()
+                    if appid.isdigit():
+                        handle_finder_steam(fetch_steam_name(appid) or kw, appid)
+                continue
+            print(f"\n[+] {len(hits)} result(s) (showing max 15):")
+            shown = hits[:15]
+            for i, a in enumerate(shown, 1):
+                tag = "  [Steam]" if not win_exes(a) and steam_skus(a) else ""
+                print(f"  {i}. {a.get('name')}{tag}")
+            sel = input("Select a number for details (enter=back): ").strip()
+            if sel.isdigit() and 1 <= int(sel) <= len(shown):
+                handle_finder_app(shown[int(sel) - 1])
+        elif c == "2":
+            appid = input("Steam appid (or 'b' to go back): ").strip()
+            if not appid or appid.lower() == "b":
+                continue
+            if not appid.isdigit():
+                print("[-] appid must be numeric.")
+                continue
+            hits = search_by_appid(db, appid)
+            if hits:
+                print(f"[+] appid {appid} found in the Discord API:")
+                for i, a in enumerate(hits, 1):
+                    print(f"  {i}. {a.get('name')}")
+                sel = input("Select a number (enter=1): ").strip() or "1"
+                try:
+                    handle_finder_app(hits[int(sel) - 1])
+                except (ValueError, IndexError):
+                    handle_finder_app(hits[0])
+            else:
+                print(f"[-] appid {appid} NOT in the Discord API -> using the SteamDB path.")
+                handle_finder_steam(
+                    fetch_steam_name(appid) or input("Game name for Info.json: ").strip() or f"Steam {appid}",
+                    appid)
+        elif c == "3":
+            db = fetch_detectable(force=True)
+        elif c == "b":
+            return
+        else:
+            print("[-] Unknown option.")
+
 def main():
     while True:
         clear_screen()
@@ -423,7 +710,8 @@ def main():
         print("2. Update library")
         print("3. Clear Cache")
         print("4. Clean Steam deployments")
-        print("5. Exit")
+        print("5. Find / add game")
+        print("6. Exit")
 
         user_input = input("\n> ")
 
@@ -440,6 +728,9 @@ def main():
             clear_screen()
             clean_steam_deployments()
         elif user_input == '5':
+            clear_screen()
+            find_add_game()
+        elif user_input == '6':
             print("Goodbye!")
             break
         else:
