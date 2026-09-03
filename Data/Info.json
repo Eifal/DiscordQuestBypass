@@ -177,6 +177,11 @@
       "name": "Dragon's Dogma 2",
       "path": "Dragons Dogma 2",
       "executable": "DD2.exe"
+    },
+    {
+      "name": "Albion Online",
+      "path": "Albion Online",
+      "executable": "albion-online.exe"
     }
   ]
 }
