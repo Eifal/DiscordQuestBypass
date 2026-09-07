@@ -187,6 +187,11 @@
       "name": "Onimusha: Way of the Sword",
       "path": "Onimusha Way of the Sword",
       "executable": "onimushawots.exe"
+    },
+    {
+      "name": "PRAGMATA",
+      "path": "PRAGMATA",
+      "executable": "pragmata_sketchbook.exe"
     }
   ]
 }
